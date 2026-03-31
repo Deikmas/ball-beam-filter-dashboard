@@ -1,0 +1,172 @@
+% =========================================================================
+% RETO 3 - BOX ROJO: Hardware for Control
+% Script 02: Filtros IIR (Butterworth Pasa-Bajos) - Ordenes 1, 2 y 3
+% Control II - Universidad del Magdalena - 2026-I
+%
+% FILTRO IIR Butterworth:
+%   [b, a] = butter(N, Wn, 'low')
+%   Wn = 0.2 -> frecuencia de corte normalizada = 5 Hz (con fs = 50 Hz)
+%   Respuesta plana en banda de paso (sin distorsion de la senal util)
+% =========================================================================
+
+clear; clc; close all;
+
+%% 1. CARGAR SENAL BASE
+load('datos_senal_base.mat');
+fprintf('Datos cargados. N = %d muestras, Ts = %.3f s\n', N, Ts);
+
+%% 2. DISEÑO DE FILTROS IIR BUTTERWORTH
+% Frecuencia de corte normalizada: Wn = fc / (fs/2) = 2.5/25 = 0.1
+Wn = 0.2;
+
+[b_iir1, a_iir1] = butter(1, Wn, 'low');
+[b_iir2, a_iir2] = butter(2, Wn, 'low');
+[b_iir3, a_iir3] = butter(3, Wn, 'low');
+
+fprintf('\n--- Coeficientes IIR Butterworth (Wn = %.1f) ---\n', Wn);
+fprintf('IIR O1:  b = [%s]\n', num2str(b_iir1, '%.4f  '));
+fprintf('         a = [%s]\n', num2str(a_iir1, '%.4f  '));
+fprintf('IIR O2:  b = [%s]\n', num2str(b_iir2, '%.4f  '));
+fprintf('         a = [%s]\n', num2str(a_iir2, '%.4f  '));
+fprintf('IIR O3:  b = [%s]\n', num2str(b_iir3, '%.4f  '));
+fprintf('         a = [%s]\n', num2str(a_iir3, '%.4f  '));
+
+%% 3. VERIFICACION DE ESTABILIDAD
+% Los polos deben tener modulo < 1 en el plano z
+polos_iir1 = roots(a_iir1);
+polos_iir2 = roots(a_iir2);
+polos_iir3 = roots(a_iir3);
+
+fprintf('\n--- Verificacion de estabilidad (|polos| < 1) ---\n');
+fprintf('IIR O1: |polos| = %s -> ', num2str(abs(polos_iir1)', '%.4f  '));
+if all(abs(polos_iir1) < 1); fprintf('ESTABLE\n'); else; fprintf('INESTABLE\n'); end
+
+fprintf('IIR O2: |polos| = %s -> ', num2str(abs(polos_iir2)', '%.4f  '));
+if all(abs(polos_iir2) < 1); fprintf('ESTABLE\n'); else; fprintf('INESTABLE\n'); end
+
+fprintf('IIR O3: |polos| = %s -> ', num2str(abs(polos_iir3)', '%.4f  '));
+if all(abs(polos_iir3) < 1); fprintf('ESTABLE\n'); else; fprintf('INESTABLE\n'); end
+
+%% 4. APLICAR FILTROS
+y_iir1 = filter(b_iir1, a_iir1, r_ruidosa);
+y_iir2 = filter(b_iir2, a_iir2, r_ruidosa);
+y_iir3 = filter(b_iir3, a_iir3, r_ruidosa);
+
+%% 5. CALCULAR METRICAS DE DESEMPENO
+mse_ruido = mean((r_ruidosa - r_ideal).^2);
+mse_iir1  = mean((y_iir1    - r_ideal).^2);
+mse_iir2  = mean((y_iir2    - r_ideal).^2);
+mse_iir3  = mean((y_iir3    - r_ideal).^2);
+
+red_iir1 = (1 - mse_iir1/mse_ruido) * 100;
+red_iir2 = (1 - mse_iir2/mse_ruido) * 100;
+red_iir3 = (1 - mse_iir3/mse_ruido) * 100;
+
+fprintf('\n--- Metricas de desempeno IIR ---\n');
+fprintf('%-20s MSE = %.6f\n', 'Senal ruidosa:', mse_ruido);
+fprintf('%-20s MSE = %.6f  Reduccion = %.1f%%\n', 'IIR Orden 1:', mse_iir1, red_iir1);
+fprintf('%-20s MSE = %.6f  Reduccion = %.1f%%\n', 'IIR Orden 2:', mse_iir2, red_iir2);
+fprintf('%-20s MSE = %.6f  Reduccion = %.1f%%\n', 'IIR Orden 3:', mse_iir3, red_iir3);
+
+%% 6. MAPA DE POLOS EN PLANO Z
+figure('Name','IIR - Mapa de polos','Position',[100 100 900 350]);
+
+subplot(1,3,1);
+zplane(b_iir1, a_iir1);
+title('IIR Orden 1'); grid on;
+
+subplot(1,3,2);
+zplane(b_iir2, a_iir2);
+title('IIR Orden 2'); grid on;
+
+subplot(1,3,3);
+zplane(b_iir3, a_iir3);
+title('IIR Orden 3'); grid on;
+
+sgtitle('Mapa de polos y ceros - Filtros IIR Butterworth');
+
+%% 7. RESPUESTA EN FRECUENCIA
+figure('Name','IIR - Respuesta en frecuencia','Position',[100 100 900 500]);
+[H1, f1] = freqz(b_iir1, a_iir1, 512, 1/Ts);
+[H2, f2] = freqz(b_iir2, a_iir2, 512, 1/Ts);
+[H3, f3] = freqz(b_iir3, a_iir3, 512, 1/Ts);
+
+subplot(2,1,1);
+plot(f1, 20*log10(abs(H1)), 'b-',  'LineWidth', 2); hold on;
+plot(f2, 20*log10(abs(H2)), 'r--', 'LineWidth', 2);
+plot(f3, 20*log10(abs(H3)), 'g:',  'LineWidth', 2.5);
+xline(5, 'k--', 'LineWidth', 1.5, 'Label', 'fc = 5 Hz');
+yline(-3, 'k:', 'LineWidth', 1, 'Label', '-3 dB');
+xlabel('Frecuencia (Hz)'); ylabel('Magnitud (dB)');
+title('IIR Butterworth - Respuesta en frecuencia (Magnitud)');
+legend('IIR O1','IIR O2','IIR O3','Location','southwest');
+xlim([0 25]); ylim([-80 5]); grid on;
+
+subplot(2,1,2);
+plot(f1, angle(H1)*180/pi, 'b-',  'LineWidth', 2); hold on;
+plot(f2, angle(H2)*180/pi, 'r--', 'LineWidth', 2);
+plot(f3, angle(H3)*180/pi, 'g:',  'LineWidth', 2.5);
+xline(5, 'k--', 'LineWidth', 1.5);
+xlabel('Frecuencia (Hz)'); ylabel('Fase (grados)');
+title('IIR Butterworth - Respuesta en frecuencia (Fase)');
+legend('IIR O1','IIR O2','IIR O3','Location','southwest');
+xlim([0 25]); grid on;
+
+%% 8. COMPARACION TEMPORAL
+figure('Name','IIR - Comparacion temporal','Position',[100 100 1000 600]);
+
+subplot(2,2,1);
+plot(t, r_ruidosa, 'r-', 'LineWidth', 1); hold on;
+plot(t, r_ideal,   'k--','LineWidth', 1.5);
+plot(t, y_iir1,    'b-', 'LineWidth', 2);
+xlabel('Tiempo (s)'); ylabel('Posicion [m]');
+title('IIR Orden 1'); legend('Ruidosa','Ideal','Filtrada');
+grid on;
+
+subplot(2,2,2);
+plot(t, r_ruidosa, 'r-', 'LineWidth', 1); hold on;
+plot(t, r_ideal,   'k--','LineWidth', 1.5);
+plot(t, y_iir2,    'b-', 'LineWidth', 2);
+xlabel('Tiempo (s)'); ylabel('Posicion [m]');
+title('IIR Orden 2'); legend('Ruidosa','Ideal','Filtrada');
+grid on;
+
+subplot(2,2,3);
+plot(t, r_ruidosa, 'r-', 'LineWidth', 1); hold on;
+plot(t, r_ideal,   'k--','LineWidth', 1.5);
+plot(t, y_iir3,    'b-', 'LineWidth', 2);
+xlabel('Tiempo (s)'); ylabel('Posicion [m]');
+title('IIR Orden 3'); legend('Ruidosa','Ideal','Filtrada');
+grid on;
+
+subplot(2,2,4);
+plot(t, r_ideal,   'k--','LineWidth', 2); hold on;
+plot(t, y_iir1,    'b-', 'LineWidth', 1.5);
+plot(t, y_iir2,    'r-', 'LineWidth', 1.5);
+plot(t, y_iir3,    'g-', 'LineWidth', 1.5);
+xlabel('Tiempo (s)'); ylabel('Posicion [m]');
+title('Comparacion IIR vs Ideal');
+legend('Ideal','IIR O1','IIR O2','IIR O3');
+grid on;
+
+sgtitle('Filtros IIR Butterworth - Ball & Beam con ruido gaussiano');
+
+%% 9. ERROR ENTRE FILTRADA E IDEAL
+figure('Name','IIR - Error','Position',[100 100 900 400]);
+plot(t, r_ruidosa - r_ideal, 'r-',  'LineWidth', 1); hold on;
+plot(t, y_iir1    - r_ideal, 'b-',  'LineWidth', 2);
+plot(t, y_iir2    - r_ideal, 'r--', 'LineWidth', 2);
+plot(t, y_iir3    - r_ideal, 'g:',  'LineWidth', 2.5);
+xlabel('Tiempo (s)'); ylabel('Error [m]');
+title('Error respecto a senal ideal: e[k] = y filtrada[k] - r ideal[k]');
+legend('Sin filtro','IIR O1','IIR O2','IIR O3');
+yline(0, 'k-', 'LineWidth', 0.5);
+grid on;
+
+%% 10. GUARDAR RESULTADOS
+save('resultados_IIR.mat', 'y_iir1', 'y_iir2', 'y_iir3', ...
+     'b_iir1', 'a_iir1', 'b_iir2', 'a_iir2', 'b_iir3', 'a_iir3', ...
+     'mse_iir1', 'mse_iir2', 'mse_iir3', ...
+     'red_iir1', 'red_iir2', 'red_iir3', ...
+     'polos_iir1', 'polos_iir2', 'polos_iir3');
+fprintf('\nResultados guardados en resultados_IIR.mat\n');

@@ -1,0 +1,117 @@
+% =========================================================================
+% RETO 3 - BOX ROJO: Hardware for Control
+% Script 03: Comparacion FIR vs IIR - Analisis final
+% Control II - Universidad del Magdalena - 2026-I
+%
+% Ejecutar DESPUES de 01_filtros_FIR.m y 02_filtros_IIR.m
+% =========================================================================
+
+clear; clc; close all;
+
+%% 1. CARGAR TODOS LOS RESULTADOS
+load('datos_senal_base.mat');
+load('resultados_FIR.mat');
+load('resultados_IIR.mat');
+fprintf('Datos cargados correctamente.\n');
+
+%% 2. TABLA COMPARATIVA DE METRICAS
+mse_ruido = mean((r_ruidosa - r_ideal).^2);
+
+fprintf('\n========================================================\n');
+fprintf('   TABLA COMPARATIVA - FIR vs IIR\n');
+fprintf('========================================================\n');
+fprintf('%-18s %-12s %-15s\n', 'Filtro', 'MSE', 'Reduccion ruido');
+fprintf('--------------------------------------------------------\n');
+fprintf('%-18s %-12.6f %-15s\n', 'Sin filtro',   mse_ruido, '0.0%');
+fprintf('%-18s %-12.6f %-14.1f%%\n', 'FIR Orden 1', mse_fir1, red_fir1);
+fprintf('%-18s %-12.6f %-14.1f%%\n', 'FIR Orden 2', mse_fir2, red_fir2);
+fprintf('%-18s %-12.6f %-14.1f%%\n', 'FIR Orden 3', mse_fir3, red_fir3);
+fprintf('%-18s %-12.6f %-14.1f%%\n', 'IIR Orden 1', mse_iir1, red_iir1);
+fprintf('%-18s %-12.6f %-14.1f%%\n', 'IIR Orden 2', mse_iir2, red_iir2);
+fprintf('%-18s %-12.6f %-14.1f%%\n', 'IIR Orden 3', mse_iir3, red_iir3);
+fprintf('========================================================\n');
+
+% Retardos FIR
+fprintf('\n--- Retardos FIR ---\n');
+fprintf('FIR O1: %.1f muestras = %.4f s\n', ret_fir1, ret_fir1*Ts);
+fprintf('FIR O2: %.1f muestras = %.4f s\n', ret_fir2, ret_fir2*Ts);
+fprintf('FIR O3: %.1f muestras = %.4f s\n', ret_fir3, ret_fir3*Ts);
+
+%% 3. COMPARACION FIR vs IIR DEL MISMO ORDEN
+figure('Name','Comparacion FIR vs IIR por orden','Position',[100 100 1100 700]);
+
+subplot(3,1,1);
+plot(t, r_ideal,  'k--','LineWidth', 2); hold on;
+plot(t, y_fir1,   'b-', 'LineWidth', 2);
+plot(t, y_iir1,   'r-', 'LineWidth', 2);
+xlabel('Tiempo (s)'); ylabel('Posicion [m]');
+title('Orden 1: FIR vs IIR');
+legend('Ideal','FIR O1','IIR O1'); grid on;
+
+subplot(3,1,2);
+plot(t, r_ideal,  'k--','LineWidth', 2); hold on;
+plot(t, y_fir2,   'b-', 'LineWidth', 2);
+plot(t, y_iir2,   'r-', 'LineWidth', 2);
+xlabel('Tiempo (s)'); ylabel('Posicion [m]');
+title('Orden 2: FIR vs IIR');
+legend('Ideal','FIR O2','IIR O2'); grid on;
+
+subplot(3,1,3);
+plot(t, r_ideal,  'k--','LineWidth', 2); hold on;
+plot(t, y_fir3,   'b-', 'LineWidth', 2);
+plot(t, y_iir3,   'r-', 'LineWidth', 2);
+xlabel('Tiempo (s)'); ylabel('Posicion [m]');
+title('Orden 3: FIR vs IIR');
+legend('Ideal','FIR O3','IIR O3'); grid on;
+
+sgtitle('Comparacion FIR (Media Movil) vs IIR (Butterworth) - Ball & Beam');
+
+%% 4. COMPARACION GENERAL: TODOS LOS FILTROS
+figure('Name','Comparacion general','Position',[100 100 1100 500]);
+
+subplot(1,2,1);
+plot(t, r_ruidosa, 'Color',[0.8 0.2 0.2], 'LineWidth', 1); hold on;
+plot(t, r_ideal,   'k--', 'LineWidth', 2);
+plot(t, y_fir1,    'b-',  'LineWidth', 1.5);
+plot(t, y_fir2,    'b--', 'LineWidth', 1.5);
+plot(t, y_fir3,    'b:',  'LineWidth', 2);
+xlabel('Tiempo (s)'); ylabel('Posicion [m]');
+title('Todos los filtros FIR');
+legend('Ruidosa','Ideal','FIR O1','FIR O2','FIR O3','Location','northwest');
+grid on;
+
+subplot(1,2,2);
+plot(t, r_ruidosa, 'Color',[0.8 0.2 0.2], 'LineWidth', 1); hold on;
+plot(t, r_ideal,   'k--', 'LineWidth', 2);
+plot(t, y_iir1,    'r-',  'LineWidth', 1.5);
+plot(t, y_iir2,    'r--', 'LineWidth', 1.5);
+plot(t, y_iir3,    'r:',  'LineWidth', 2);
+xlabel('Tiempo (s)'); ylabel('Posicion [m]');
+title('Todos los filtros IIR');
+legend('Ruidosa','Ideal','IIR O1','IIR O2','IIR O3','Location','northwest');
+grid on;
+
+%% 5. GRAFICA DE BARRAS: MSE COMPARATIVO
+figure('Name','MSE comparativo','Position',[100 100 800 450]);
+nombres  = {'Sin filtro','FIR O1','FIR O2','FIR O3','IIR O1','IIR O2','IIR O3'};
+mse_vals = [mse_ruido, mse_fir1, mse_fir2, mse_fir3, mse_iir1, mse_iir2, mse_iir3];
+colores  = [0.8 0.2 0.2; 0.2 0.4 0.8; 0.2 0.4 0.8; 0.2 0.4 0.8;
+            0.8 0.4 0.1; 0.8 0.4 0.1; 0.8 0.4 0.1];
+
+b_bar = bar(mse_vals);
+b_bar.FaceColor = 'flat';
+for i = 1:7
+    b_bar.CData(i,:) = colores(i,:);
+end
+set(gca, 'XTickLabel', nombres, 'XTickLabelRotation', 30);
+ylabel('MSE [m^2]');
+title('Error cuadratico medio - Comparacion de filtros');
+grid on;
+
+%% 6. GUARDAR FIGURA RESUMEN
+fprintf('\nSimulacion completa. Revisa las figuras generadas.\n');
+fprintf('Orden sugerido de ejecucion:\n');
+fprintf('  1. 00_senal_base.m\n');
+fprintf('  2. 01_filtros_FIR.m\n');
+fprintf('  3. 02_filtros_IIR.m\n');
+fprintf('  4. 03_comparacion.m  (este script)\n');

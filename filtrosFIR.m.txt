@@ -1,0 +1,151 @@
+% =========================================================================
+% RETO 3 - BOX ROJO: Hardware for Control
+% Script 01: Filtros FIR (Media Movil) - Ordenes 1, 2 y 3
+% Control II - Universidad del Magdalena - 2026-I
+%
+% FILTRO FIR - Media Movil:
+%   y[k] = (1/N) * sum(x[k-i]) para i = 0..N-1
+%   Coeficientes iguales: b = [1/N, 1/N, ..., 1/N]
+%   Sin retroalimentacion -> siempre estable
+% =========================================================================
+
+clear; clc; close all;
+
+%% 1. CARGAR SENAL BASE
+load('datos_senal_base.mat');
+fprintf('Datos cargados. N = %d muestras, Ts = %.3f s\n', N, Ts);
+
+%% 2. DEFINICION DE COEFICIENTES FIR
+% FIR Orden 1: promedia 2 muestras
+b_fir1 = [0.5, 0.5];
+
+% FIR Orden 2: promedia 3 muestras
+b_fir2 = [1/3, 1/3, 1/3];
+
+% FIR Orden 3: promedia 4 muestras
+b_fir3 = [0.25, 0.25, 0.25, 0.25];
+
+fprintf('\n--- Coeficientes FIR ---\n');
+fprintf('FIR O1: b = [%.4f, %.4f]\n', b_fir1(1), b_fir1(2));
+fprintf('FIR O2: b = [%.4f, %.4f, %.4f]\n', b_fir2(1), b_fir2(2), b_fir2(3));
+fprintf('FIR O3: b = [%.4f, %.4f, %.4f, %.4f]\n', b_fir3(1), b_fir3(2), b_fir3(3), b_fir3(4));
+
+%% 3. APLICAR FILTROS
+% filter(b, a, x) con a=1 para FIR (sin retroalimentacion)
+y_fir1 = filter(b_fir1, 1, r_ruidosa);
+y_fir2 = filter(b_fir2, 1, r_ruidosa);
+y_fir3 = filter(b_fir3, 1, r_ruidosa);
+
+%% 4. CALCULAR METRICAS DE DESEMPENO
+% Error cuadratico medio (MSE) respecto a la senal ideal
+mse_ruido = mean((r_ruidosa - r_ideal).^2);
+mse_fir1  = mean((y_fir1    - r_ideal).^2);
+mse_fir2  = mean((y_fir2    - r_ideal).^2);
+mse_fir3  = mean((y_fir3    - r_ideal).^2);
+
+% Reduccion de ruido (en %)
+red_fir1 = (1 - mse_fir1/mse_ruido) * 100;
+red_fir2 = (1 - mse_fir2/mse_ruido) * 100;
+red_fir3 = (1 - mse_fir3/mse_ruido) * 100;
+
+fprintf('\n--- Metricas de desempeno FIR ---\n');
+fprintf('%-20s MSE = %.6f\n', 'Senal ruidosa:', mse_ruido);
+fprintf('%-20s MSE = %.6f  Reduccion = %.1f%%\n', 'FIR Orden 1:', mse_fir1, red_fir1);
+fprintf('%-20s MSE = %.6f  Reduccion = %.1f%%\n', 'FIR Orden 2:', mse_fir2, red_fir2);
+fprintf('%-20s MSE = %.6f  Reduccion = %.1f%%\n', 'FIR Orden 3:', mse_fir3, red_fir3);
+
+% Retardo de grupo (en muestras y en segundos)
+ret_fir1 = (length(b_fir1)-1)/2;
+ret_fir2 = (length(b_fir2)-1)/2;
+ret_fir3 = (length(b_fir3)-1)/2;
+
+fprintf('\n--- Retardo de grupo FIR ---\n');
+fprintf('FIR O1: %.1f muestras = %.4f s\n', ret_fir1, ret_fir1*Ts);
+fprintf('FIR O2: %.1f muestras = %.4f s\n', ret_fir2, ret_fir2*Ts);
+fprintf('FIR O3: %.1f muestras = %.4f s\n', ret_fir3, ret_fir3*Ts);
+
+%% 5. RESPUESTA EN FRECUENCIA
+figure('Name','FIR - Respuesta en frecuencia','Position',[100 100 900 500]);
+[H1, f1] = freqz(b_fir1, 1, 512, 1/Ts);
+[H2, f2] = freqz(b_fir2, 1, 512, 1/Ts);
+[H3, f3] = freqz(b_fir3, 1, 512, 1/Ts);
+
+subplot(2,1,1);
+plot(f1, 20*log10(abs(H1)), 'b-',  'LineWidth', 2); hold on;
+plot(f2, 20*log10(abs(H2)), 'r--', 'LineWidth', 2);
+plot(f3, 20*log10(abs(H3)), 'g:',  'LineWidth', 2.5);
+xline(5, 'k--', 'LineWidth', 1.5, 'Label', 'fc = 5 Hz');
+yline(-3, 'k:', 'LineWidth', 1, 'Label', '-3 dB');
+xlabel('Frecuencia (Hz)'); ylabel('Magnitud (dB)');
+title('FIR - Respuesta en frecuencia (Magnitud)');
+legend('FIR O1','FIR O2','FIR O3','Location','southwest');
+xlim([0 25]); ylim([-40 5]); grid on;
+
+subplot(2,1,2);
+plot(f1, angle(H1)*180/pi, 'b-',  'LineWidth', 2); hold on;
+plot(f2, angle(H2)*180/pi, 'r--', 'LineWidth', 2);
+plot(f3, angle(H3)*180/pi, 'g:',  'LineWidth', 2.5);
+xline(5, 'k--', 'LineWidth', 1.5);
+xlabel('Frecuencia (Hz)'); ylabel('Fase (grados)');
+title('FIR - Respuesta en frecuencia (Fase)');
+legend('FIR O1','FIR O2','FIR O3','Location','southwest');
+xlim([0 25]); grid on;
+
+%% 6. COMPARACION TEMPORAL
+figure('Name','FIR - Comparacion temporal','Position',[100 100 1000 600]);
+
+subplot(2,2,1);
+plot(t, r_ruidosa, 'r-', 'LineWidth', 1); hold on;
+plot(t, r_ideal,   'k--','LineWidth', 1.5);
+plot(t, y_fir1,    'b-', 'LineWidth', 2);
+xlabel('Tiempo (s)'); ylabel('Posicion [m]');
+title('FIR Orden 1'); legend('Ruidosa','Ideal','Filtrada');
+grid on;
+
+subplot(2,2,2);
+plot(t, r_ruidosa, 'r-', 'LineWidth', 1); hold on;
+plot(t, r_ideal,   'k--','LineWidth', 1.5);
+plot(t, y_fir2,    'b-', 'LineWidth', 2);
+xlabel('Tiempo (s)'); ylabel('Posicion [m]');
+title('FIR Orden 2'); legend('Ruidosa','Ideal','Filtrada');
+grid on;
+
+subplot(2,2,3);
+plot(t, r_ruidosa, 'r-', 'LineWidth', 1); hold on;
+plot(t, r_ideal,   'k--','LineWidth', 1.5);
+plot(t, y_fir3,    'b-', 'LineWidth', 2);
+xlabel('Tiempo (s)'); ylabel('Posicion [m]');
+title('FIR Orden 3'); legend('Ruidosa','Ideal','Filtrada');
+grid on;
+
+subplot(2,2,4);
+plot(t, r_ideal,   'k--','LineWidth', 2); hold on;
+plot(t, y_fir1,    'b-', 'LineWidth', 1.5);
+plot(t, y_fir2,    'r-', 'LineWidth', 1.5);
+plot(t, y_fir3,    'g-', 'LineWidth', 1.5);
+xlabel('Tiempo (s)'); ylabel('Posicion [m]');
+title('Comparacion FIR vs Ideal');
+legend('Ideal','FIR O1','FIR O2','FIR O3');
+grid on;
+
+sgtitle('Filtros FIR (Media Movil) - Ball & Beam con ruido gaussiano');
+
+%% 7. ERROR ENTRE FILTRADA E IDEAL
+figure('Name','FIR - Error','Position',[100 100 900 400]);
+plot(t, r_ruidosa - r_ideal, 'r-',  'LineWidth', 1); hold on;
+plot(t, y_fir1    - r_ideal, 'b-',  'LineWidth', 2);
+plot(t, y_fir2    - r_ideal, 'r--', 'LineWidth', 2);
+plot(t, y_fir3    - r_ideal, 'g:',  'LineWidth', 2.5);
+xlabel('Tiempo (s)'); ylabel('Error [m]');
+title('Error respecto a senal ideal: e[k] = y filtrada[k] - r ideal[k]');
+legend('Sin filtro','FIR O1','FIR O2','FIR O3');
+yline(0, 'k-', 'LineWidth', 0.5);
+grid on;
+
+%% 8. GUARDAR RESULTADOS
+save('resultados_FIR.mat', 'y_fir1', 'y_fir2', 'y_fir3', ...
+     'b_fir1', 'b_fir2', 'b_fir3', ...
+     'mse_fir1', 'mse_fir2', 'mse_fir3', ...
+     'red_fir1', 'red_fir2', 'red_fir3', ...
+     'ret_fir1', 'ret_fir2', 'ret_fir3');
+fprintf('\nResultados guardados en resultados_FIR.mat\n');

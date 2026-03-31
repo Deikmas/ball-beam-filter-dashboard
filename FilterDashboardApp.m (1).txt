@@ -1,0 +1,810 @@
+classdef FilterDashboardApp < matlab.apps.AppBase
+% =========================================================================
+% RETO 3 - BOX ROJO: Hardware for Control
+% FilterDashboardApp v3.0 - Dashboard de Filtros Digitales Ball & Beam
+% Control II - Universidad del Magdalena - 2026-I
+%
+% EJECUTAR: FilterDashboardApp
+% REQUIERE: Control System Toolbox
+%
+% CAMBIOS v3:
+%   - Barras MSE comparativo (en lugar de histograma de densidad)
+%   - Suavizado spline de la senal filtrada (solo visual)
+%   - Pestana Individual: 2 graficas separadas
+%       Graf 1: Senal ideal vs Filtrada (sin ruido)
+%       Graf 2: Senal con ruido vs Filtrada
+%   - Colores completamente distintos por filtro
+%   - Comparacion: graficas FIR separadas de IIR
+% =========================================================================
+
+properties (Access = public)
+    UIFigure
+
+    % Panel izquierdo
+    PanelConfig
+    ModoDropDown
+    TipoDropDown
+    OrdenDropDown
+    WnField
+    ThetaField
+    mField
+    RField
+    kField
+    AmpRuidoField
+    SliderRuido
+    LblSliderVal
+    StatusLabel
+    AxesAnim         % animacion Ball & Beam
+
+    % Tabs
+    TabGroup
+    TabSenal
+    TabComparacion
+    TabMSE
+    TabFreq
+    TabRetardo
+
+    % Axes pestana Individual
+    AxesIdealFilt
+    AxesRuidoFilt
+
+    % Axes pestana Comparacion
+    AxesCompFIR
+    AxesCompIIR
+    BtnZoom          % boton toggle zoom 2s
+
+    % Axes MSE
+    AxesMSE
+
+    % Axes Frecuencia
+    AxesFreq
+
+    % Axes Retardo de grupo
+    AxesRetFIR
+    AxesRetIIR
+
+    % Panel derecho
+    PanelMetricas
+    LblK0Val
+    LblMSERuidoVal
+    LblMSEFIR1Val
+    LblMSEFIR2Val
+    LblMSEFIR3Val
+    LblMSEIIR1Val
+    LblMSEIIR2Val
+    LblMSEIIR3Val
+    LblMejorVal
+end
+
+methods (Access = private)
+
+    % ------------------------------------------------------------------
+    % CALLBACKS
+    % ------------------------------------------------------------------
+    function autoUpdate(app, ~)
+        modo = app.ModoDropDown.Value;
+        if strcmp(modo,'Individual')
+            app.TipoDropDown.Enable  = 'on';
+            app.OrdenDropDown.Enable = 'on';
+        else
+            app.TipoDropDown.Enable  = 'off';
+            app.OrdenDropDown.Enable = 'off';
+        end
+        runDashboard(app);
+    end
+
+    function SliderRuidoChanged(app, ~)
+        val = round(app.SliderRuido.Value);
+        app.AmpRuidoField.Value  = val;
+        app.LblSliderVal.Text    = sprintf('%d %%', val);
+        runDashboard(app);
+    end
+
+    function BtnZoomPushed(app, ~)
+        % Toggle zoom: cambia entre [0 2] y [0 Tf]
+        if strcmp(app.BtnZoom.Text, '🔍  Zoom  ON')
+            app.BtnZoom.Text            = '🔍  Zoom  OFF';
+            app.BtnZoom.BackgroundColor = [0.25 0.30 0.38];
+        else
+            app.BtnZoom.Text            = '🔍  Zoom  ON';
+            app.BtnZoom.BackgroundColor = [0.20 0.50 0.30];
+        end
+        runDashboard(app);
+    end
+
+    function BtnSimularPushed(app, ~)
+        % Mantenido para compatibilidad con cb2 en campos numericos
+        runDashboard(app);
+    end
+
+    % ------------------------------------------------------------------
+    % SIMULACION PRINCIPAL
+    % ------------------------------------------------------------------
+    function runDashboard(app)
+        app.StatusLabel.Text      = '  Calculando...';
+        app.StatusLabel.FontColor = [0.95 0.78 0.10];
+        drawnow;
+        try
+            %--------------------------------------------------------------
+            % 1. PARAMETROS
+            %--------------------------------------------------------------
+            m     = app.mField.Value;
+            R     = app.RField.Value;
+            k_geo = app.kField.Value;
+            g     = 9.81;
+            J     = (2/5)*m*R^2;
+            K0    = (g*k_geo)/(1 + J/(m*R^2));
+            Ts    = 0.02;
+            Tf    = 10;
+            t     = (0:Ts:Tf)';
+            N     = length(t);
+            theta = app.ThetaField.Value;
+            amp_r = app.AmpRuidoField.Value;
+            Wn    = max(0.01, min(0.99, app.WnField.Value));
+            fc_hz = Wn * 25;
+
+            app.LblK0Val.Text = sprintf('%.5f  m/s2/rad', K0);
+
+            %--------------------------------------------------------------
+            % 2. SENAL IDEAL ZOH
+            %--------------------------------------------------------------
+            Ad = [1 Ts; 0 1];
+            Bd = [K0*Ts^2/2; K0*Ts];
+            Cd = [1 0];
+            x  = zeros(2,N);
+            r_ideal = zeros(N,1);
+            for k = 1:N-1
+                x(:,k+1)   = Ad*x(:,k) + Bd*theta;
+                r_ideal(k) = Cd*x(:,k);
+            end
+            r_ideal(N) = Cd*x(:,N);
+
+            %--------------------------------------------------------------
+            % 3. RUIDO GAUSSIANO
+            %--------------------------------------------------------------
+            rng(42);
+            rango = max(r_ideal) - min(r_ideal);
+            if rango < 1e-6; rango = 1; end
+            ruido     = (amp_r/100)*rango*randn(N,1);
+            r_ruidosa = r_ideal + ruido;
+
+            %--------------------------------------------------------------
+            % 4. FILTROS FIR (Media movil)
+            %--------------------------------------------------------------
+            b1 = [0.5 0.5];
+            b2 = [1/3 1/3 1/3];
+            b3 = [0.25 0.25 0.25 0.25];
+            y_fir1 = filter(b1,1,r_ruidosa);
+            y_fir2 = filter(b2,1,r_ruidosa);
+            y_fir3 = filter(b3,1,r_ruidosa);
+
+            %--------------------------------------------------------------
+            % 5. FILTROS IIR (Butterworth)
+            %--------------------------------------------------------------
+            [bi1,ai1] = butter(1,Wn,'low');
+            [bi2,ai2] = butter(2,Wn,'low');
+            [bi3,ai3] = butter(3,Wn,'low');
+            y_iir1 = filter(bi1,ai1,r_ruidosa);
+            y_iir2 = filter(bi2,ai2,r_ruidosa);
+            y_iir3 = filter(bi3,ai3,r_ruidosa);
+
+            %--------------------------------------------------------------
+            % 6. SUAVIZADO SPLINE (solo visual)
+            % Se interpola la senal filtrada en 5x mas puntos
+            %--------------------------------------------------------------
+            t_fine = linspace(t(1), t(end), N*5)';
+            sm_fir1 = interp1(t, y_fir1, t_fine, 'spline');
+            sm_fir2 = interp1(t, y_fir2, t_fine, 'spline');
+            sm_fir3 = interp1(t, y_fir3, t_fine, 'spline');
+            sm_iir1 = interp1(t, y_iir1, t_fine, 'spline');
+            sm_iir2 = interp1(t, y_iir2, t_fine, 'spline');
+            sm_iir3 = interp1(t, y_iir3, t_fine, 'spline');
+            sm_ideal = interp1(t, r_ideal, t_fine, 'spline');
+            sm_ruido = interp1(t, r_ruidosa, t_fine, 'linear');
+
+            %--------------------------------------------------------------
+            % 7. METRICAS MSE
+            %--------------------------------------------------------------
+            mse0 = mean((r_ruidosa-r_ideal).^2);
+            mf1  = mean((y_fir1-r_ideal).^2);
+            mf2  = mean((y_fir2-r_ideal).^2);
+            mf3  = mean((y_fir3-r_ideal).^2);
+            mi1  = mean((y_iir1-r_ideal).^2);
+            mi2  = mean((y_iir2-r_ideal).^2);
+            mi3  = mean((y_iir3-r_ideal).^2);
+
+            rf1=(1-mf1/mse0)*100; rf2=(1-mf2/mse0)*100; rf3=(1-mf3/mse0)*100;
+            ri1=(1-mi1/mse0)*100; ri2=(1-mi2/mse0)*100; ri3=(1-mi3/mse0)*100;
+
+            mse_v = [mf1 mf2 mf3 mi1 mi2 mi3];
+            nms   = {'FIR O1','FIR O2','FIR O3','IIR O1','IIR O2','IIR O3'};
+            [~,idx] = min(mse_v);
+
+            app.LblMSERuidoVal.Text = sprintf('%.6f m^2', mse0);
+            app.LblMSEFIR1Val.Text  = sprintf('%.6f  (%.1f%%)',mf1,rf1);
+            app.LblMSEFIR2Val.Text  = sprintf('%.6f  (%.1f%%)',mf2,rf2);
+            app.LblMSEFIR3Val.Text  = sprintf('%.6f  (%.1f%%)',mf3,rf3);
+            app.LblMSEIIR1Val.Text  = sprintf('%.6f  (%.1f%%)',mi1,ri1);
+            app.LblMSEIIR2Val.Text  = sprintf('%.6f  (%.1f%%)',mi2,ri2);
+            app.LblMSEIIR3Val.Text  = sprintf('%.6f  (%.1f%%)',mi3,ri3);
+            app.LblMejorVal.Text    = nms{idx};
+
+            %--------------------------------------------------------------
+            % 8. PALETA DE COLORES (todos distintos)
+            %--------------------------------------------------------------
+            cIdeal  = [1.00  1.00  1.00];   % blanco
+            cRuido  = [0.85  0.85  0.85];   % gris claro
+            cFIR1   = [0.28  0.85  0.95];   % cyan
+            cFIR2   = [0.20  0.55  1.00];   % azul medio
+            cFIR3   = [0.50  0.20  1.00];   % violeta
+            cIIR1   = [0.18  0.92  0.50];   % verde
+            cIIR2   = [1.00  0.78  0.10];   % amarillo
+            cIIR3   = [1.00  0.38  0.10];   % naranja
+
+            %--------------------------------------------------------------
+            % 9. PESTANA INDIVIDUAL
+            %--------------------------------------------------------------
+            modo = app.ModoDropDown.Value;
+            if strcmp(modo,'Individual')
+                tipo = app.TipoDropDown.Value;
+                ord  = app.OrdenDropDown.Value;
+                if strcmp(tipo,'FIR')
+                    switch ord
+                        case 'Orden 1'; ys=sm_fir1; yr=y_fir1; lb='FIR O1'; clr=cFIR1;
+                        case 'Orden 2'; ys=sm_fir2; yr=y_fir2; lb='FIR O2'; clr=cFIR2;
+                        case 'Orden 3'; ys=sm_fir3; yr=y_fir3; lb='FIR O3'; clr=cFIR3;
+                    end
+                else
+                    switch ord
+                        case 'Orden 1'; ys=sm_iir1; yr=y_iir1; lb='IIR O1'; clr=cIIR1;
+                        case 'Orden 2'; ys=sm_iir2; yr=y_iir2; lb='IIR O2'; clr=cIIR2;
+                        case 'Orden 3'; ys=sm_iir3; yr=y_iir3; lb='IIR O3'; clr=cIIR3;
+                    end
+                end
+            else
+                ys=sm_iir2; yr=y_iir2; lb='IIR O2'; clr=cIIR2;
+            end
+
+            % Grafica 1: Ideal vs Filtrada (suavizada)
+            cla(app.AxesIdealFilt); hold(app.AxesIdealFilt,'on');
+            plot(app.AxesIdealFilt, t_fine, sm_ideal, ...
+                'Color',cIdeal,'LineStyle','--','LineWidth',2.0,'DisplayName','Ideal');
+            plot(app.AxesIdealFilt, t_fine, ys, ...
+                'Color',clr,'LineWidth',2.5,'DisplayName',lb);
+            legend(app.AxesIdealFilt,'show','Location','northwest', ...
+                'TextColor',[0.88 0.88 0.88],'FontSize',9);
+            title(app.AxesIdealFilt,['Señal ideal  vs  Filtrada: ' lb], ...
+                'Color','white','FontWeight','bold','FontSize',10);
+            xlabel(app.AxesIdealFilt,'Tiempo (s)',        'Color',[0.72 0.72 0.72],'FontWeight','bold');
+            ylabel(app.AxesIdealFilt,'Posicion r(t) [m]', 'Color',[0.72 0.72 0.72],'FontWeight','bold');
+            grid(app.AxesIdealFilt,'on'); hold(app.AxesIdealFilt,'off');
+
+            % Grafica 2: Ruidosa vs Filtrada (original discreta)
+            cla(app.AxesRuidoFilt); hold(app.AxesRuidoFilt,'on');
+            plot(app.AxesRuidoFilt, t, r_ruidosa, ...
+                'Color',cRuido,'LineWidth',1.0,'DisplayName','Con ruido');
+            plot(app.AxesRuidoFilt, t_fine, ys, ...
+                'Color',clr,'LineWidth',2.5,'DisplayName',lb);
+            legend(app.AxesRuidoFilt,'show','Location','northwest', ...
+                'TextColor',[0.88 0.88 0.88],'FontSize',9);
+            title(app.AxesRuidoFilt,['Señal con ruido  vs  Filtrada: ' lb], ...
+                'Color','white','FontWeight','bold','FontSize',10);
+            xlabel(app.AxesRuidoFilt,'Tiempo (s)',        'Color',[0.72 0.72 0.72],'FontWeight','bold');
+            ylabel(app.AxesRuidoFilt,'Posicion r(t) [m]', 'Color',[0.72 0.72 0.72],'FontWeight','bold');
+            grid(app.AxesRuidoFilt,'on'); hold(app.AxesRuidoFilt,'off');
+
+            %--------------------------------------------------------------
+            % 10. PESTANA COMPARACION: FIR separado de IIR
+            %--------------------------------------------------------------
+            % Panel FIR
+            cla(app.AxesCompFIR); hold(app.AxesCompFIR,'on');
+            plot(app.AxesCompFIR, t_fine, sm_ideal, ...
+                'Color',cIdeal,'LineStyle','--','LineWidth',2.0,'DisplayName','Ideal');
+            plot(app.AxesCompFIR, t, r_ruidosa, ...
+                'Color',cRuido,'LineWidth',0.8,'DisplayName','Ruidosa');
+            plot(app.AxesCompFIR, t_fine, sm_fir1, 'Color',cFIR1,'LineWidth',2.2,'DisplayName','FIR O1');
+            plot(app.AxesCompFIR, t_fine, sm_fir2, 'Color',cFIR2,'LineWidth',2.2,'DisplayName','FIR O2');
+            plot(app.AxesCompFIR, t_fine, sm_fir3, 'Color',cFIR3,'LineWidth',2.2,'DisplayName','FIR O3');
+            legend(app.AxesCompFIR,'show','Location','northwest', ...
+                'TextColor',[0.88 0.88 0.88],'FontSize',8);
+            title(app.AxesCompFIR,'Comparacion FIR  (O1=cyan | O2=azul | O3=violeta)', ...
+                'Color','white','FontWeight','bold','FontSize',10);
+            xlabel(app.AxesCompFIR,'Tiempo (s)',        'Color',[0.72 0.72 0.72],'FontWeight','bold');
+            ylabel(app.AxesCompFIR,'Posicion r(t) [m]', 'Color',[0.72 0.72 0.72],'FontWeight','bold');
+            if strcmp(app.BtnZoom.Text,'🔍  Zoom  ON')
+                xlim(app.AxesCompFIR,[0 2]);
+            else
+                xlim(app.AxesCompFIR,[0 Tf]);
+            end
+            grid(app.AxesCompFIR,'on'); hold(app.AxesCompFIR,'off');
+
+            % Panel IIR
+            cla(app.AxesCompIIR); hold(app.AxesCompIIR,'on');
+            plot(app.AxesCompIIR, t_fine, sm_ideal, ...
+                'Color',cIdeal,'LineStyle','--','LineWidth',2.0,'DisplayName','Ideal');
+            plot(app.AxesCompIIR, t, r_ruidosa, ...
+                'Color',cRuido,'LineWidth',0.8,'DisplayName','Ruidosa');
+            plot(app.AxesCompIIR, t_fine, sm_iir1, 'Color',cIIR1,'LineWidth',2.2,'DisplayName','IIR O1');
+            plot(app.AxesCompIIR, t_fine, sm_iir2, 'Color',cIIR2,'LineWidth',2.2,'DisplayName','IIR O2');
+            plot(app.AxesCompIIR, t_fine, sm_iir3, 'Color',cIIR3,'LineWidth',2.2,'DisplayName','IIR O3');
+            legend(app.AxesCompIIR,'show','Location','northwest', ...
+                'TextColor',[0.88 0.88 0.88],'FontSize',8);
+            title(app.AxesCompIIR,'Comparacion IIR  (O1=verde | O2=amarillo | O3=naranja)', ...
+                'Color','white','FontWeight','bold','FontSize',10);
+            xlabel(app.AxesCompIIR,'Tiempo (s)',        'Color',[0.72 0.72 0.72],'FontWeight','bold');
+            ylabel(app.AxesCompIIR,'Posicion r(t) [m]', 'Color',[0.72 0.72 0.72],'FontWeight','bold');
+            if strcmp(app.BtnZoom.Text,'🔍  Zoom  ON')
+                xlim(app.AxesCompIIR,[0 2]);
+            else
+                xlim(app.AxesCompIIR,[0 Tf]);
+            end
+            grid(app.AxesCompIIR,'on'); hold(app.AxesCompIIR,'off');
+
+            %--------------------------------------------------------------
+            % 11. PESTANA MSE - GRAFICA DE BARRAS
+            %--------------------------------------------------------------
+            cla(app.AxesMSE);
+            nombres  = {'Sin filtro','FIR O1','FIR O2','FIR O3','IIR O1','IIR O2','IIR O3'};
+            mse_vals = [mse0, mf1, mf2, mf3, mi1, mi2, mi3];
+            colores_bar = [0.75 0.20 0.20;   % rojo - sin filtro
+                           0.28 0.85 0.95;   % cyan   - FIR O1
+                           0.20 0.55 1.00;   % azul   - FIR O2
+                           0.50 0.20 1.00;   % violeta- FIR O3
+                           0.18 0.92 0.50;   % verde  - IIR O1
+                           1.00 0.78 0.10;   % amarillo-IIR O2
+                           1.00 0.38 0.10];  % naranja- IIR O3
+
+            b_bar = bar(app.AxesMSE, mse_vals);
+            b_bar.FaceColor = 'flat';
+            for i = 1:7
+                b_bar.CData(i,:) = colores_bar(i,:);
+            end
+            set(app.AxesMSE, 'XTickLabel', nombres, 'XTickLabelRotation', 25, ...
+                'FontSize', 9, 'XColor',[0.72 0.72 0.72], 'YColor',[0.72 0.72 0.72]);
+
+            % Etiquetas encima de cada barra
+            hold(app.AxesMSE,'on');
+            for i = 1:7
+                text(app.AxesMSE, i, mse_vals(i)*1.03, ...
+                    sprintf('%.4f', mse_vals(i)), ...
+                    'HorizontalAlignment','center','FontSize',8, ...
+                    'Color','white','FontWeight','bold');
+            end
+            hold(app.AxesMSE,'off');
+
+            ylabel(app.AxesMSE,'MSE  [m^2]','Color',[0.72 0.72 0.72],'FontWeight','bold');
+            title(app.AxesMSE, ...
+                sprintf('Error cuadratico medio - Comparacion de filtros  |  Mejor: %s',nms{idx}), ...
+                'Color','white','FontWeight','bold','FontSize',10);
+            grid(app.AxesMSE,'on');
+
+            %--------------------------------------------------------------
+            % 12. PESTANA FRECUENCIA
+            %--------------------------------------------------------------
+            fs_hz = 1/Ts;
+            [Hf1,ff]=freqz(b1,1,512,fs_hz);
+            [Hf2,~] =freqz(b2,1,512,fs_hz);
+            [Hf3,~] =freqz(b3,1,512,fs_hz);
+            [Hi1,~] =freqz(bi1,ai1,512,fs_hz);
+            [Hi2,~] =freqz(bi2,ai2,512,fs_hz);
+            [Hi3,~] =freqz(bi3,ai3,512,fs_hz);
+
+            cla(app.AxesFreq); hold(app.AxesFreq,'on');
+            plot(app.AxesFreq,ff,20*log10(abs(Hf1)),'Color',cFIR1,'LineWidth',2.0,'DisplayName','FIR O1');
+            plot(app.AxesFreq,ff,20*log10(abs(Hf2)),'Color',cFIR2,'LineWidth',2.0,'DisplayName','FIR O2');
+            plot(app.AxesFreq,ff,20*log10(abs(Hf3)),'Color',cFIR3,'LineWidth',2.0,'DisplayName','FIR O3');
+            plot(app.AxesFreq,ff,20*log10(abs(Hi1)),'Color',cIIR1,'LineWidth',2.0,'LineStyle','--','DisplayName','IIR O1');
+            plot(app.AxesFreq,ff,20*log10(abs(Hi2)),'Color',cIIR2,'LineWidth',2.0,'LineStyle','--','DisplayName','IIR O2');
+            plot(app.AxesFreq,ff,20*log10(abs(Hi3)),'Color',cIIR3,'LineWidth',2.0,'LineStyle','--','DisplayName','IIR O3');
+            xline(app.AxesFreq,fc_hz,'w--','LineWidth',1.5,'Label',sprintf('fc=%.1fHz',fc_hz));
+            yline(app.AxesFreq,-3,   'w:', 'LineWidth',1.2,'Label','-3dB');
+            legend(app.AxesFreq,'show','Location','southwest', ...
+                'TextColor',[0.88 0.88 0.88],'FontSize',8,'NumColumns',2);
+            title(app.AxesFreq, ...
+                sprintf('Respuesta en frecuencia  |  Wn=%.2f  fc=%.1fHz  (FIR=solido | IIR=discontinuo)',Wn,fc_hz), ...
+                'Color','white','FontWeight','bold','FontSize',10);
+            xlabel(app.AxesFreq,'Frecuencia (Hz)','Color',[0.72 0.72 0.72],'FontWeight','bold');
+            ylabel(app.AxesFreq,'Magnitud (dB)',   'Color',[0.72 0.72 0.72],'FontWeight','bold');
+            xlim(app.AxesFreq,[0 25]);
+            ylim(app.AxesFreq,[-80 5]);
+            grid(app.AxesFreq,'on'); hold(app.AxesFreq,'off');
+
+            app.StatusLabel.Text      = '  OK  Listo';
+            app.StatusLabel.FontColor = [0.18 0.92 0.35];
+
+            %--------------------------------------------------------------
+            % 14. ANIMACION Ball & Beam (usa senal ideal)
+            %--------------------------------------------------------------
+            drawBallBeam(app, t, r_ideal, theta);
+
+            %--------------------------------------------------------------
+            % 13. PESTANA RETARDO DE GRUPO
+            % grpdelay devuelve retardo en muestras -> *Ts = segundos
+            %--------------------------------------------------------------
+            nfft = 512;
+            [gd_f1,wg] = grpdelay(b1,  1,   nfft, 1/Ts);
+            [gd_f2,~]  = grpdelay(b2,  1,   nfft, 1/Ts);
+            [gd_f3,~]  = grpdelay(b3,  1,   nfft, 1/Ts);
+            [gd_i1,~]  = grpdelay(bi1, ai1, nfft, 1/Ts);
+            [gd_i2,~]  = grpdelay(bi2, ai2, nfft, 1/Ts);
+            [gd_i3,~]  = grpdelay(bi3, ai3, nfft, 1/Ts);
+
+            % Convertir de muestras a milisegundos
+            gd_f1_ms = gd_f1 * Ts * 1000;
+            gd_f2_ms = gd_f2 * Ts * 1000;
+            gd_f3_ms = gd_f3 * Ts * 1000;
+            gd_i1_ms = gd_i1 * Ts * 1000;
+            gd_i2_ms = gd_i2 * Ts * 1000;
+            gd_i3_ms = gd_i3 * Ts * 1000;
+
+            % Solo mostrar hasta Nyquist y recortar outliers para IIR
+            idx_ny = wg <= 25;
+            wg_plot = wg(idx_ny);
+            clamp = @(x) min(max(x(idx_ny), -5), 200);
+
+            % Grafica FIR
+            cla(app.AxesRetFIR); hold(app.AxesRetFIR,'on');
+            plot(app.AxesRetFIR, wg_plot, clamp(gd_f1_ms), 'Color',cFIR1,'LineWidth',2.2,'DisplayName','FIR O1');
+            plot(app.AxesRetFIR, wg_plot, clamp(gd_f2_ms), 'Color',cFIR2,'LineWidth',2.2,'DisplayName','FIR O2');
+            plot(app.AxesRetFIR, wg_plot, clamp(gd_f3_ms), 'Color',cFIR3,'LineWidth',2.2,'DisplayName','FIR O3');
+            xline(app.AxesRetFIR, fc_hz,'w--','LineWidth',1.2,'Label',sprintf('fc=%.1fHz',fc_hz));
+            legend(app.AxesRetFIR,'show','Location','northeast','TextColor',[0.88 0.88 0.88],'FontSize',8);
+            title(app.AxesRetFIR,'Retardo de grupo  FIR  (fase lineal = retardo constante)', ...
+                'Color','white','FontWeight','bold','FontSize',10);
+            xlabel(app.AxesRetFIR,'Frecuencia (Hz)','Color',[0.72 0.72 0.72],'FontWeight','bold');
+            ylabel(app.AxesRetFIR,'Retardo (ms)',   'Color',[0.72 0.72 0.72],'FontWeight','bold');
+            xlim(app.AxesRetFIR,[0 25]); grid(app.AxesRetFIR,'on');
+            hold(app.AxesRetFIR,'off');
+
+            % Grafica IIR
+            cla(app.AxesRetIIR); hold(app.AxesRetIIR,'on');
+            plot(app.AxesRetIIR, wg_plot, clamp(gd_i1_ms), 'Color',cIIR1,'LineWidth',2.2,'DisplayName','IIR O1');
+            plot(app.AxesRetIIR, wg_plot, clamp(gd_i2_ms), 'Color',cIIR2,'LineWidth',2.2,'DisplayName','IIR O2');
+            plot(app.AxesRetIIR, wg_plot, clamp(gd_i3_ms), 'Color',cIIR3,'LineWidth',2.2,'DisplayName','IIR O3');
+            xline(app.AxesRetIIR, fc_hz,'w--','LineWidth',1.2,'Label',sprintf('fc=%.1fHz',fc_hz));
+            legend(app.AxesRetIIR,'show','Location','northeast','TextColor',[0.88 0.88 0.88],'FontSize',8);
+            title(app.AxesRetIIR,'Retardo de grupo  IIR  (retardo variable por frecuencia)', ...
+                'Color','white','FontWeight','bold','FontSize',10);
+            xlabel(app.AxesRetIIR,'Frecuencia (Hz)','Color',[0.72 0.72 0.72],'FontWeight','bold');
+            ylabel(app.AxesRetIIR,'Retardo (ms)',   'Color',[0.72 0.72 0.72],'FontWeight','bold');
+            xlim(app.AxesRetIIR,[0 25]); grid(app.AxesRetIIR,'on');
+            hold(app.AxesRetIIR,'off');
+
+        catch ME
+            app.StatusLabel.Text      = ['  Error: ' ME.message];
+            app.StatusLabel.FontColor = [0.95 0.20 0.20];
+        end
+    end
+
+    % ------------------------------------------------------------------
+    % ANIMACION BALL & BEAM
+    % ------------------------------------------------------------------
+    function drawBallBeam(app, t, r_pos, theta)
+        ax = app.AxesAnim;
+        if ~isvalid(ax); return; end
+
+        L_viga = 1.0;    % longitud visual de la viga
+        r_bola = 0.055;  % radio visual de la bola
+        step   = 4;      % dibujar 1 de cada 4 frames (mas fluido)
+
+        % Escalar r_pos al rango [-0.42, 0.42] sobre la viga
+        r_max = max(abs(r_pos));
+        if r_max < 1e-6; r_max = 1; end
+        r_norm = r_pos / r_max * 0.42;
+
+        % Circulo unitario para bola
+        th_c = linspace(0, 2*pi, 36);
+        cx   = cos(th_c);
+        cy   = sin(th_c);
+
+        idx = 1:step:length(t);
+
+        for i = idx
+            if ~isvalid(ax); return; end
+            cla(ax);
+
+            % Fondo oscuro
+            ax.Color      = [0.05 0.05 0.09];
+            ax.XColor     = [0.20 0.20 0.20];
+            ax.YColor     = [0.20 0.20 0.20];
+            ax.GridColor  = [0.14 0.14 0.14];
+            ax.GridAlpha  = 0.8;
+            ax.XTick      = [];
+            ax.YTick      = [];
+            hold(ax, 'on');
+            axis(ax, 'equal');
+            xlim(ax, [-0.80  0.80]);
+            ylim(ax, [-0.60  0.55]);
+
+            % --- theta positivo = viga inclinada a la DERECHA (baja a der) ---
+            ang = -theta;   % correccion de signo para vista 2D
+            dx  = cos(ang) * L_viga/2;
+            dy  = sin(ang) * L_viga/2;
+
+            % Base triangular (soporte)
+            bx = [0 -0.18  0.18  0];
+            by = [-0.08 -0.42 -0.42 -0.08];
+            fill(ax, bx, by, [0.45 0.32 0.12], ...
+                'EdgeColor',[0.60 0.45 0.20],'LineWidth',1.2);
+
+            % Columna vertical del pivote
+            fill(ax, [-0.04 0.04 0.04 -0.04], ...
+                      [-0.08 -0.08 0.06 0.06], ...
+                [0.40 0.28 0.10],'EdgeColor',[0.55 0.40 0.15],'LineWidth',1);
+
+            % Pivote central (circulo)
+            fill(ax, 0.05*cx, 0.05*cy+0.04, ...
+                [0.65 0.65 0.70],'EdgeColor',[0.85 0.85 0.90],'LineWidth',1.2);
+
+            % Viga (rectangulo rotado)
+            w_viga = 0.04;  % ancho de la viga
+            % Esquinas del rectangulo sin rotar
+            vx = [-L_viga/2  L_viga/2  L_viga/2 -L_viga/2];
+            vy = [-w_viga/2 -w_viga/2  w_viga/2  w_viga/2];
+            % Rotar
+            vxr = vx*cos(ang) - vy*sin(ang);
+            vyr = vx*sin(ang) + vy*cos(ang);
+            fill(ax, vxr, vyr+0.04, [0.55 0.58 0.65], ...
+                'EdgeColor',[0.70 0.72 0.80],'LineWidth',1.2);
+
+            % Extremo izquierdo de la viga (tope)
+            ex = -dx; ey = -dy + 0.04;
+            fill(ax, ex + 0.025*[-1 1 1 -1], ...
+                      ey + 0.07*[-0.2 -0.2 1 1], ...
+                [0.40 0.40 0.45],'EdgeColor',[0.60 0.60 0.65],'LineWidth',1);
+
+            % Servo (cuadrado azul lateral, lado izquierdo)
+            % ELIMINADO por decision de diseno
+
+            % Posicion de la bola sobre la viga
+            ri  = r_norm(i);
+            % theta positivo -> bola se desplaza hacia la derecha
+            bx_c = ri*cos(ang);
+            by_c = ri*sin(ang) + 0.04 + w_viga/2 + r_bola;
+
+            % Sombra de la bola
+            fill(ax, bx_c + r_bola*0.9*cx, by_c - r_bola*0.15 + r_bola*0.3*cy, ...
+                [0.10 0.10 0.14],'EdgeColor','none');
+
+            % Bola (esfera dorada como en la imagen)
+            fill(ax, bx_c + r_bola*cx, by_c + r_bola*cy, ...
+                [0.80 0.68 0.10],'EdgeColor',[0.60 0.50 0.05],'LineWidth',1.2);
+
+            % Brillo de la bola
+            fill(ax, bx_c - r_bola*0.28 + r_bola*0.35*cx, ...
+                      by_c + r_bola*0.30 + r_bola*0.25*cy, ...
+                [1.0 0.95 0.70],'EdgeColor','none');
+
+            % Textos informativos
+            text(ax, -0.76, 0.50, sprintf('t = %.2f s', t(i)), ...
+                'Color',[0.65 0.65 0.65],'FontSize',7.5,'FontWeight','bold');
+            text(ax, -0.76, 0.40, sprintf('r = %.3f m', r_pos(i)), ...
+                'Color',[0.28 0.85 0.95],'FontSize',7.5,'FontWeight','bold');
+            text(ax, -0.76, 0.30, sprintf('\\theta = %.2f rad', theta), ...
+                'Color',[1.00 0.78 0.10],'FontSize',7.5,'FontWeight','bold');
+
+            title(ax, 'Ball  &  Beam  —  Lazo Abierto', ...
+                'Color','white','FontSize',8.5,'FontWeight','bold');
+            hold(ax, 'off');
+            drawnow limitrate;
+        end
+    end
+
+    % ------------------------------------------------------------------
+    % CREAR INTERFAZ
+    % ------------------------------------------------------------------
+    function createComponents(app)
+
+        BG  = [0.13 0.15 0.20];
+        PBG = [0.18 0.20 0.27];
+        FG  = [0.92 0.95 1.00];
+        LBL = [0.82 0.86 0.90];
+        AX  = [0.04 0.04 0.08];
+
+        app.UIFigure          = uifigure('Visible','off');
+        app.UIFigure.Position = [10 10 1400 820];
+        app.UIFigure.Name     = 'Filter Dashboard v4.0  |  Reto 3 Box Rojo  |  Control II UniMagdalena 2026-I';
+        app.UIFigure.Color    = BG;
+
+        % ==============================================================
+        % PANEL IZQUIERDO
+        % ==============================================================
+        app.PanelConfig = uipanel(app.UIFigure, ...
+            'Title','  ⚙  PANEL DE CONTROL','FontWeight','bold','FontSize',10, ...
+            'Position',[8 8 245 804],'BackgroundColor',PBG,'ForegroundColor',FG);
+
+        yp  = 765;
+        cb  = createCallbackFcn(app,@autoUpdate,true);
+        cb2 = createCallbackFcn(app,@BtnSimularPushed,true);
+
+        function sep(txt,yy,clr)
+            if nargin<3; clr=[0.30 0.78 1.00]; end
+            uilabel(app.PanelConfig,'Text',txt,'Position',[6 yy 233 20], ...
+                'FontColor',[0.08 0.08 0.12],'FontWeight','bold', ...
+                'HorizontalAlignment','center','FontSize',8.5, ...
+                'BackgroundColor',clr);
+        end
+        function lb=L(txt,yy)
+            lb=uilabel(app.PanelConfig,'Text',txt, ...
+                'Position',[8 yy 158 22],'FontColor',LBL,'FontSize',9);
+        end
+        function fld=F(val,yy)
+            fld=uieditfield(app.PanelConfig,'numeric','Value',val, ...
+                'Position',[170 yy 66 22],'FontSize',9);
+        end
+
+        % Modo
+        sep('MODO DE VISUALIZACION',yp); yp=yp-26;
+        L('Modo:',yp);
+        app.ModoDropDown=uidropdown(app.PanelConfig, ...
+            'Items',{'Individual','Comparacion'},'Value','Comparacion', ...
+            'Position',[90 yp 148 22],'FontSize',9,'ValueChangedFcn',cb);
+        yp=yp-28;
+        L('Tipo filtro:',yp);
+        app.TipoDropDown=uidropdown(app.PanelConfig, ...
+            'Items',{'FIR','IIR'},'Value','FIR', ...
+            'Position',[90 yp 148 22],'FontSize',9,'Enable','off','ValueChangedFcn',cb);
+        yp=yp-28;
+        L('Orden:',yp);
+        app.OrdenDropDown=uidropdown(app.PanelConfig, ...
+            'Items',{'Orden 1','Orden 2','Orden 3'},'Value','Orden 1', ...
+            'Position',[90 yp 148 22],'FontSize',9,'Enable','off','ValueChangedFcn',cb);
+        yp=yp-38;
+
+        % IIR Wn
+        sep('FRECUENCIA DE CORTE  IIR',yp,[1.00 0.72 0.20]); yp=yp-26;
+        L('Wn  (0.01 - 0.99):',yp);
+        app.WnField=F(0.1,yp);
+        app.WnField.ValueChangedFcn=cb2;
+        yp=yp-38;
+
+        % Parametros fisicos
+        sep('PROPIEDADES DEL SISTEMA',yp); yp=yp-26;
+        L('m  masa bola (kg):',yp);
+        app.mField=F(0.11,yp); app.mField.ValueChangedFcn=cb2; yp=yp-26;
+        L('R  radio bola (m):',yp);
+        app.RField=F(0.015,yp); app.RField.ValueChangedFcn=cb2; yp=yp-26;
+        L('k  gan. geometrica:',yp);
+        app.kField=F(2,yp); app.kField.ValueChangedFcn=cb2; yp=yp-38;
+
+        % Condiciones sim
+        sep('AJUSTES DE SIMULACION',yp,[0.50 0.92 0.60]); yp=yp-26;
+        L('theta ang. viga (rad):',yp);
+        app.ThetaField=F(0.1,yp); app.ThetaField.ValueChangedFcn=cb2; yp=yp-26;
+
+        % Slider de ruido en tiempo real (reemplaza el boton SIMULAR)
+        L('Amplitud ruido (%):',yp);
+        app.AmpRuidoField=F(5,yp); app.AmpRuidoField.ValueChangedFcn=cb2; yp=yp-30;
+
+        app.SliderRuido = uislider(app.PanelConfig, ...
+            'Limits',[0 50],'Value',5, ...
+            'Position',[8 yp 195 3], ...
+            'ValueChangedFcn', createCallbackFcn(app,@SliderRuidoChanged,true));
+        app.LblSliderVal = uilabel(app.PanelConfig,'Text','5 %', ...
+            'Position',[206 yp-8 34 22], ...
+            'FontColor',[0.30 0.78 1.00],'FontSize',9,'FontWeight','bold');
+        yp=yp-36;
+
+        % Status label
+        app.StatusLabel=uilabel(app.PanelConfig,'Text','  Iniciando...', ...
+            'Position',[4 yp 237 20],'FontColor',[0.50 0.50 0.50], ...
+            'FontSize',8,'HorizontalAlignment','center','WordWrap','on');
+        yp=yp-26;
+
+        % Separador animacion
+        uilabel(app.PanelConfig,'Text','VISTA FISICA  —  Ball & Beam', ...
+            'Position',[6 yp 233 20],'FontColor',[0.08 0.08 0.12], ...
+            'FontWeight','bold','HorizontalAlignment','center','FontSize',8.5, ...
+            'BackgroundColor',[0.45 0.88 0.72]);
+        yp=yp-8;
+
+        % Axes de animacion en la parte inferior del panel
+        app.AxesAnim = uiaxes(app.PanelConfig,'Position',[4 8 237 yp]);
+        app.AxesAnim.Color     = [0.04 0.04 0.08];
+        app.AxesAnim.XColor    = [0.30 0.30 0.30];
+        app.AxesAnim.YColor    = [0.30 0.30 0.30];
+        app.AxesAnim.XTick     = [];
+        app.AxesAnim.YTick     = [];
+        app.AxesAnim.GridColor = [0.18 0.18 0.18];
+        axis(app.AxesAnim,'equal');
+        title(app.AxesAnim,'Ball & Beam','Color','white','FontSize',9,'FontWeight','bold');
+
+        % ==============================================================
+        % PANEL CENTRAL CON TABS
+        % ==============================================================
+        app.TabGroup=uitabgroup(app.UIFigure,'Position',[263 8 868 804]);
+
+        function ax=mkAx(tab,pos)
+            ax=uiaxes(tab,'Position',pos);
+            ax.Color=AX;
+            ax.XColor=[0.68 0.68 0.68]; ax.YColor=[0.68 0.68 0.68];
+            ax.GridColor=[0.25 0.25 0.25]; ax.GridAlpha=0.55;
+            ax.FontSize=9; grid(ax,'on');
+        end
+
+        % Tab Individual
+        app.TabSenal=uitab(app.TabGroup,'Title','  Individual  ');
+        app.TabSenal.BackgroundColor=[0.09 0.09 0.13];
+        app.AxesIdealFilt = mkAx(app.TabSenal,[8 406 852 382]);
+        app.AxesRuidoFilt = mkAx(app.TabSenal,[8 8   852 388]);
+
+        % Tab Comparacion
+        app.TabComparacion=uitab(app.TabGroup,'Title','  Comparacion  ');
+        app.TabComparacion.BackgroundColor=[0.09 0.09 0.13];
+        app.AxesCompFIR = mkAx(app.TabComparacion,[8 406 852 366]);
+        app.AxesCompIIR = mkAx(app.TabComparacion,[8 8   852 370]);
+
+        % Boton toggle zoom - esquina superior derecha de la tab
+        app.BtnZoom = uibutton(app.TabComparacion,'push', ...
+            'Text','🔍  Zoom  ON', ...
+            'Position',[716 778 144 22], ...
+            'BackgroundColor',[0.20 0.50 0.30], ...
+            'FontColor',[1 1 1],'FontSize',9,'FontWeight','bold', ...
+            'ButtonPushedFcn', createCallbackFcn(app,@BtnZoomPushed,true));
+
+        % Tab MSE barras
+        app.TabMSE=uitab(app.TabGroup,'Title','  MSE Comparativo  ');
+        app.TabMSE.BackgroundColor=[0.09 0.09 0.13];
+        app.AxesMSE=mkAx(app.TabMSE,[8 8 852 778]);
+
+        % Tab Frecuencia
+        app.TabFreq=uitab(app.TabGroup,'Title','  Resp. Frecuencia  ');
+        app.TabFreq.BackgroundColor=[0.09 0.09 0.13];
+        app.AxesFreq=mkAx(app.TabFreq,[8 8 852 778]);
+
+        % Tab Retardo de grupo
+        app.TabRetardo=uitab(app.TabGroup,'Title','  Retardo de Grupo  ');
+        app.TabRetardo.BackgroundColor=[0.09 0.09 0.13];
+        app.AxesRetFIR = mkAx(app.TabRetardo,[8 406 852 382]);
+        app.AxesRetIIR = mkAx(app.TabRetardo,[8 8   852 388]);
+
+        % ==============================================================
+        % PANEL DERECHO - METRICAS
+        % ==============================================================
+        app.PanelMetricas=uipanel(app.UIFigure, ...
+            'Title','  📊  RESULTADOS','FontWeight','bold','FontSize',10, ...
+            'Position',[1141 8 251 804], ...
+            'BackgroundColor',PBG,'ForegroundColor',FG);
+
+        function lbl=card(par,x,y,w,h,tit,clr)
+            uipanel(par,'Position',[x y w h], ...
+                'BackgroundColor',[0.22 0.24 0.32],'BorderType','none');
+            uipanel(par,'Position',[x y w 3], ...
+                'BackgroundColor',clr,'BorderType','none');
+            uilabel(par,'Text',tit,'Position',[x+5 y+h-22 w-8 16], ...
+                'FontColor',[0.75 0.80 0.85],'FontSize',8,'FontWeight','bold');
+            lbl=uilabel(par,'Text','---', ...
+                'Position',[x+5 y+6 w-8 h-30], ...
+                'FontColor',clr,'FontSize',10, ...
+                'FontWeight','bold','WordWrap','on');
+        end
+
+        cW=235; cX=8; yc=768;
+        app.LblK0Val       = card(app.PanelMetricas,cX,yc-52,cW,54,'K0  Ganancia linealizada',[0.38 0.72 1.00]); yc=yc-60;
+        app.LblMSERuidoVal = card(app.PanelMetricas,cX,yc-52,cW,54,'SIN FILTRO (referencia)', [0.75 0.20 0.20]); yc=yc-60;
+        app.LblMSEFIR1Val  = card(app.PanelMetricas,cX,yc-52,cW,54,'FIR  Orden 1  (cyan)',    [0.28 0.85 0.95]); yc=yc-60;
+        app.LblMSEFIR2Val  = card(app.PanelMetricas,cX,yc-52,cW,54,'FIR  Orden 2  (azul)',    [0.20 0.55 1.00]); yc=yc-60;
+        app.LblMSEFIR3Val  = card(app.PanelMetricas,cX,yc-52,cW,54,'FIR  Orden 3  (violeta)', [0.50 0.20 1.00]); yc=yc-60;
+        app.LblMSEIIR1Val  = card(app.PanelMetricas,cX,yc-52,cW,54,'IIR  Orden 1  (verde)',   [0.18 0.92 0.50]); yc=yc-60;
+        app.LblMSEIIR2Val  = card(app.PanelMetricas,cX,yc-52,cW,54,'IIR  Orden 2  (amarillo)',[1.00 0.78 0.10]); yc=yc-60;
+        app.LblMSEIIR3Val  = card(app.PanelMetricas,cX,yc-52,cW,54,'IIR  Orden 3  (naranja)', [1.00 0.38 0.10]); yc=yc-60;
+        app.LblMejorVal    = card(app.PanelMetricas,cX,yc-52,cW,54,'MEJOR FILTRO',            [0.18 0.92 0.35]);
+
+        app.UIFigure.Visible='on';
+    end
+
+end
+
+methods (Access = public)
+    function app = FilterDashboardApp
+        createComponents(app);
+        registerApp(app,app.UIFigure);
+        runDashboard(app);
+        if nargout==0; clear app; end
+    end
+    function delete(app)
+        delete(app.UIFigure);
+    end
+end
+
+end

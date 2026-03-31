@@ -1,0 +1,94 @@
+% =========================================================================
+% RETO 3 - BOX ROJO: Hardware for Control
+% Script 00: Generacion de la senal base del sistema Ball & Beam con ruido
+% Control II - Universidad del Magdalena - 2026-I
+%
+% Parametros del sistema (Reto 2 - Box Verde):
+%   m = 0.11 kg, R = 0.015 m, k = 2, g = 9.81 m/s2
+%   K0 = 5g/7 * k... ver calculo abajo
+%   Ts = 0.02 s (fs = 50 Hz)
+% =========================================================================
+
+clear; clc; close all;
+
+%% 1. PARAMETROS DEL SISTEMA
+m     = 0.11;       % masa de la bola [kg]
+R     = 0.015;      % radio de la bola [m]
+k_geo = 2;          % ganancia geometrica
+g     = 9.81;       % gravedad [m/s2]
+J     = (2/5)*m*R^2; % inercia esfera maciza
+
+% Ganancia linealizada
+K0 = (g * k_geo) / (1 + J/(m*R^2));
+fprintf('K0 = %.4f m/s2/rad\n', K0);
+
+%% 2. PARAMETROS DE SIMULACION
+Ts = 0.02;          % periodo de muestreo [s]
+Tf = 10;            % duracion total [s]
+t  = (0:Ts:Tf)';    % vector de tiempo discreto
+N  = length(t);     % numero de muestras
+
+theta = 0.1;        % angulo de la viga [rad] - angulo pequeno para modelo lineal valido
+
+%% 3. SENAL IDEAL (modelo lineal discreto - ZOH)
+% Espacio de estados: x1=r, x2=rdot
+% Ad = [1 Ts; 0 1], Bd = [K0*Ts^2/2; K0*Ts]
+Ad = [1 Ts; 0 1];
+Bd = [K0*Ts^2/2; K0*Ts];
+Cd = [1 0];
+
+x     = zeros(2, N);
+r_ideal = zeros(N, 1);
+
+for k = 1:N-1
+    x(:,k+1)   = Ad*x(:,k) + Bd*theta;
+    r_ideal(k) = Cd * x(:,k);
+end
+r_ideal(N) = Cd * x(:,N);
+
+%% 4. AGREGAR RUIDO BLANCO GAUSSIANO
+% Amplitud del ruido: 5% del rango de la senal ideal
+rng(42);  % semilla fija para reproducibilidad
+amp_ruido = 0.05 * (max(r_ideal) - min(r_ideal));
+ruido     = amp_ruido * randn(N, 1);
+r_ruidosa = r_ideal + ruido;
+
+fprintf('Amplitud del ruido: %.4f m\n', amp_ruido);
+fprintf('SNR aproximada: %.2f dB\n', 20*log10(std(r_ideal)/std(ruido)));
+
+%% 5. GRAFICA DE LA SENAL BASE
+figure('Name','Senal base Ball & Beam','Position',[100 100 900 500]);
+
+subplot(2,1,1);
+plot(t, r_ideal, 'b-', 'LineWidth', 2); hold on;
+plot(t, r_ruidosa, 'r-', 'LineWidth', 1);
+legend('Senal ideal', 'Senal con ruido', 'Location', 'northwest');
+xlabel('Tiempo (s)'); ylabel('Posicion r(t) [m]');
+title(sprintf('Ball & Beam - Senal base | \\theta = %.2f rad | Ts = %.3f s', theta, Ts));
+grid on;
+
+subplot(2,1,2);
+plot(t, ruido, 'r-', 'LineWidth', 1);
+xlabel('Tiempo (s)'); ylabel('Amplitud [m]');
+title('Ruido blanco gaussiano agregado');
+grid on;
+
+%% 6. ESPECTRO DE FRECUENCIAS
+figure('Name','Espectro de frecuencias','Position',[100 100 900 400]);
+f    = (0:N-1)/(N*Ts);   % vector de frecuencias [Hz]
+Y_id = abs(fft(r_ideal))/N;
+Y_ru = abs(fft(r_ruidosa))/N;
+
+plot(f(1:floor(N/2)), Y_id(1:floor(N/2)), 'b-', 'LineWidth', 2); hold on;
+plot(f(1:floor(N/2)), Y_ru(1:floor(N/2)), 'r-', 'LineWidth', 1);
+xline(2.5, 'k--', 'LineWidth', 1.5, 'Label', 'fc = 2.5 Hz');
+xlabel('Frecuencia (Hz)'); ylabel('Amplitud');
+title('Espectro de frecuencias - Senal ideal vs ruidosa');
+legend('Senal ideal', 'Senal con ruido');
+xlim([0 25]); grid on;
+
+%% 7. GUARDAR DATOS PARA LOS SCRIPTS DE FILTROS
+save('datos_senal_base.mat', 't', 'r_ideal', 'r_ruidosa', 'ruido', ...
+     'Ts', 'Tf', 'N', 'K0', 'm', 'R', 'k_geo', 'g', 'theta', 'amp_ruido');
+fprintf('\nDatos guardados en datos_senal_base.mat\n');
+fprintf('Ejecuta ahora los scripts 01_FIR.m y 02_IIR.m\n');
